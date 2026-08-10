@@ -1,0 +1,36 @@
+name: Build DeepBlockNetwork
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: 安装 Theos 依赖
+        run: |
+          brew install dpkg || true
+          brew install ldid || true
+          git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+
+      - name: 编译并打包 .deb
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
+        run: |
+          export THEOS="$HOME/theos"
+          make package FINALPACKAGE=1
+
+      - name: 上传 .deb 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepBlockNetwork-deb
+          path: packages/*.deb
