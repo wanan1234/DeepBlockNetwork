@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Filter</key>
+    <dict>
+        <key>Bundles</key>
+        <array>
+            <!-- 可指定特定 App 的 Bundle ID，或留空表示所有 App（但建议指定） -->
+            <string>com.tencent.xin</string>
+            <string>com.bilibili.bilibili</string>
+            <!-- 添加更多 Bundle ID 按需 -->
+        </array>
+    </dict>
+</dict>
+</plist>
