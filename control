@@ -1,0 +1,9 @@
+Package: com.example.deepblocknetwork
+Name: DeepBlockNetwork
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: 深度断网插件，Hook connect 系统调用，阻断所有 TCP 连接
+Maintainer: you <you@example.com>
+Author: you
+Section: Tweaks
+Depends: mobilesubstrate
