@@ -59,8 +59,8 @@ int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 static void install_connect_hook(void) {
     struct rebinding rebind;
     rebind.name = "connect";
-    rebind.replacement = hooked_connect;
-    rebind.replaced = (void *)&orig_connect;
+    rebind.replacement = (void *)hooked_connect;   // 强制类型转换
+    rebind.replaced = (void **)&orig_connect;      // 强制类型转换
     rebind_symbols(&rebind, 1);
     NSLog(@"[DeepBlockNetwork] connect hook installed");
 }
