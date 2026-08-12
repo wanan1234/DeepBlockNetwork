@@ -77,7 +77,20 @@ static void install_connect_hook(void) {
 // 新增：双指双击手势控制
 // =============================================================
 
-// 显示设置菜单
+// 显示 Toast 提示（全局函数）
+static void showToast(NSString *msg, UIWindow *window) {
+    UIViewController *top = window.rootViewController;
+    while (top.presentedViewController) {
+        top = top.presentedViewController;
+    }
+    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [top presentViewController:toast animated:YES completion:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [toast dismissViewControllerAnimated:YES completion:nil];
+    });
+}
+
+// 显示设置菜单（全局函数）
 static void showSettingsMenu(UIWindow *window) {
     UIViewController *topVC = window.rootViewController;
     while (topVC.presentedViewController) {
@@ -98,7 +111,7 @@ static void showSettingsMenu(UIWindow *window) {
                                                 [[NSUserDefaults standardUserDefaults] setBool:newState forKey:@"DeepBlockNetworkEnabled"];
                                                 [[NSUserDefaults standardUserDefaults] synchronize];
                                                 // 显示 Toast 提示
-                                                [self showToast:[NSString stringWithFormat:@"断网已%@", newState ? @"开启" : @"关闭"] fromWindow:window];
+                                                showToast([NSString stringWithFormat:@"断网已%@", newState ? @"开启" : @"关闭"], window);
                                             }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -110,19 +123,6 @@ static void showSettingsMenu(UIWindow *window) {
     }
     
     [topVC presentViewController:alert animated:YES completion:nil];
-}
-
-// 简易 Toast
-static void showToast(NSString *msg, UIWindow *window) {
-    UIViewController *top = window.rootViewController;
-    while (top.presentedViewController) {
-        top = top.presentedViewController;
-    }
-    UIAlertController *toast = [UIAlertController alertControllerWithTitle:nil message:msg preferredStyle:UIAlertControllerStyleAlert];
-    [top presentViewController:toast animated:YES completion:nil];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [toast dismissViewControllerAnimated:YES completion:nil];
-    });
 }
 
 // =============================================================
