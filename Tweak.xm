@@ -1,6 +1,6 @@
 // =============================================================
 //  DeepBlockNetwork — 深度断网插件
-//  双指长按手势（基于 UIApplication sendEvent:，不会被拦截）
+//  双指双击手势开关联网/断网
 // =============================================================
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -66,7 +66,7 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
-// 手势检测（基于 UIApplication sendEvent:）
+// 手势控制（双指双击）
 // =============================================================
 
 static void showToast(NSString *msg, UIWindow *window) {
@@ -92,23 +92,24 @@ static void showSettingsMenu(UIWindow *window) {
     NSString *status = isNetworkOn ? @"已联网" : @"已断网";
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"网络控制"
-                                                                   message:[NSString stringWithFormat:@"当前状态：%@\n切换后可能需重启 App 生效", status]
+                                                                   message:[NSString stringWithFormat:@"当前状态：%@", status]
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    NSString *actionTitle = isNetworkOn ? @"关闭联网（断网）" : @"开启联网";
+    NSString *actionTitle = isNetworkOn ? @"关闭联网" : @"开启联网";
     [alert addAction:[UIAlertAction actionWithTitle:actionTitle
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction * _Nonnull action) {
                                                 BOOL newBlocking = !blocking;
                                                 
                                                 if (newBlocking) {
+                                                    // 关闭联网（断网），需要重启
                                                     UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"提示"
                                                                                                                            message:@"关闭联网后需要重启 App 才能生效，确定要继续吗？"
                                                                                                                     preferredStyle:UIAlertControllerStyleAlert];
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
                                                         [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                         [[NSUserDefaults standardUserDefaults] synchronize];
-                                                        showToast(@"联网已关闭（断网）", window);
+                                                        showToast(@"联网已关闭", window);
                                                     }]];
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
                                                     
@@ -118,6 +119,7 @@ static void showSettingsMenu(UIWindow *window) {
                                                     }
                                                     [top presentViewController:confirmAlert animated:YES completion:nil];
                                                 } else {
+                                                    // 开启联网（从断网恢复）
                                                     [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                     [[NSUserDefaults standardUserDefaults] synchronize];
                                                     showToast(@"联网已开启", window);
@@ -134,56 +136,55 @@ static void showSettingsMenu(UIWindow *window) {
     [topVC presentViewController:alert animated:YES completion:nil];
 }
 
-// 检测双指长按的全局变量
-static NSTimeInterval touchStartTime = 0;
-static BOOL isTouching = NO;
-static NSInteger touchCount = 0;
-
 // =============================================================
-// Hook UIApplication 的 sendEvent: 来检测触摸事件
+// Hook UIWindow：双指双击
 // =============================================================
-%hook UIApplication
+%hook UIWindow
 
-- (void)sendEvent:(UIEvent *)event {
-    %orig; // 先执行原始事件处理
-    
-    if (event.type != UIEventTypeTouches) return;
-    
-    NSSet *touches = [event allTouches];
-    if (touches.count == 0) return;
-    
-    UITouch *touch = [touches anyObject];
-    if (touch.phase == UITouchPhaseBegan) {
-        touchCount = touches.count;
-        if (touchCount == 2) {
-            isTouching = YES;
-            touchStartTime = [NSDate timeIntervalSinceReferenceDate];
-        }
-    } else if (touch.phase == UITouchPhaseEnded || touch.phase == UITouchPhaseCancelled) {
-        isTouching = NO;
-        touchCount = 0;
-    } else if (touch.phase == UITouchPhaseStationary) {
-        // 检查是否双指仍触摸，且持续时间超过 1.2 秒
-        if (isTouching && touchCount == 2) {
-            NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-            if (now - touchStartTime > 1.2) {
-                // 触发菜单
-                UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-                if (keyWindow) {
-                    // 触觉反馈
-                    if (@available(iOS 10.0, *)) {
-                        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-                        [generator prepare];
-                        [generator impactOccurred];
-                    }
-                    showSettingsMenu(keyWindow);
-                }
-                // 重置状态，避免重复触发
-                isTouching = NO;
-                touchCount = 0;
-            }
-        }
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = %orig;
+    if (self) {
+        // 双指双击手势
+        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleTap:)];
+        gesture.numberOfTouchesRequired = 2;
+        gesture.numberOfTapsRequired = 2;
+        gesture.cancelsTouchesInView = NO;  // 不阻断其他触摸事件
+        gesture.delegate = (id<UIGestureRecognizerDelegate>)self;
+        [self addGestureRecognizer:gesture];
+        NSLog(@"[DeepBlockNetwork] 2-finger double-tap gesture added");
     }
+    return self;
+}
+
+%new
+- (void)dk_handleDoubleTap:(UITapGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateRecognized) {
+        // 触觉反馈
+        if (@available(iOS 10.0, *)) {
+            UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+            [generator prepare];
+            [generator impactOccurred];
+        }
+        // 屏幕闪白视觉反馈
+        UIView *flashView = [[UIView alloc] initWithFrame:self.bounds];
+        flashView.backgroundColor = [UIColor whiteColor];
+        flashView.alpha = 0.15;
+        flashView.userInteractionEnabled = NO;
+        [self addSubview:flashView];
+        [UIView animateWithDuration:0.3 animations:^{
+            flashView.alpha = 0;
+        } completion:^(BOOL finished) {
+            [flashView removeFromSuperview];
+        }];
+        
+        showSettingsMenu(self);
+    }
+}
+
+// 允许与其他手势共存
+%new
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    return YES;
 }
 
 %end
