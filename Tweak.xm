@@ -1,6 +1,6 @@
 // =============================================================
 //  DeepBlockNetwork — 深度断网插件
-//  双指双击手势开关，实时切换无需重启（增强版）
+//  双指双击手势开关联网/断网
 // =============================================================
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -9,13 +9,15 @@
 #import <errno.h>
 #import <arpa/inet.h>
 #import <netdb.h>
-#import <SystemConfiguration/SystemConfiguration.h>
 #import "fishhook.h"
 
 // ---------- 配置 ----------
 static NSArray *kWhitelistDomains = @[];
 
+// 返回 YES 表示阻断（断网），NO 表示允许（联网）
 static BOOL DKIsBlockEnabled(void) {
+    // 注意：这里存储的是“是否阻断”，YES=阻断，NO=允许
+    // 但我们 UI 上用“联网”概念，所以取反显示
     return [[NSUserDefaults standardUserDefaults] boolForKey:@"DeepBlockNetworkEnabled"];
 }
 
@@ -29,7 +31,7 @@ static int (*orig_connect)(int, const struct sockaddr *, socklen_t);
 
 int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     if (DKShouldBlockConnection(addr)) {
-        errno = ENETUNREACH;  // 网络不可达
+        errno = ECONNREFUSED;
         return -1;
     }
     return orig_connect(sockfd, addr, addrlen);
@@ -67,35 +69,9 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
-// 切换时触发网络刷新
+// 手势控制（UI 文案改为“联网”）
 // =============================================================
-static void triggerNetworkRefresh(void) {
-    // 1. 发送系统网络变化通知（Darwin）
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                         CFSTR("com.apple.system.config.network_change"), NULL, NULL, YES);
-    // 2. 发送 Reachability 通知（AFNetworking 等库监听）
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"kNetworkReachabilityChangedNotification" object:nil];
-    // 3. 清除 URL 缓存
-    [[NSURLCache sharedURLCache] removeAllCachedResponses];
-    // 4. 发送 App 激活通知（某些应用在激活时重新检查网络）
-    [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
-    // 5. 尝试重置默认 NSURLSession（如果存在）
-    NSURLSession *session = [NSURLSession sharedSession];
-    if (session) {
-        // 仅 iOS 9+ 有 resetWithCompletionHandler
-        if ([session respondsToSelector:@selector(resetWithCompletionHandler:)]) {
-            [session resetWithCompletionHandler:^{
-                NSLog(@"[DeepBlockNetwork] NSURLSession reset completed");
-            }];
-        }
-    }
-    // 6. 强制刷新 Reachability（使用 SystemConfiguration 私有 API 可能不行，但我们可以发送通知）
-    // 一些应用会监听 SCNetworkReachability 的变化，我们通过发送通知来尝试触发。
-}
 
-// =============================================================
-// 手势控制
-// =============================================================
 static void showToast(NSString *msg, UIWindow *window) {
     UIViewController *top = window.rootViewController;
     while (top.presentedViewController) {
@@ -114,23 +90,27 @@ static void showSettingsMenu(UIWindow *window) {
         topVC = topVC.presentedViewController;
     }
     
-    BOOL enabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"DeepBlockNetworkEnabled"];
-    NSString *status = enabled ? @"已开启" : @"已关闭";
+    // 注意：存储值是“阻断”标志，YES=断网，NO=联网
+    BOOL blocking = [[NSUserDefaults standardUserDefaults] boolForKey:@"DeepBlockNetworkEnabled"];
+    // 联网状态 = !blocking
+    BOOL isNetworkOn = !blocking;
+    NSString *status = isNetworkOn ? @"已联网" : @"已断网";
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"深度断网控制"
-                                                                   message:[NSString stringWithFormat:@"当前状态：%@\n点击下方切换", status]
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"网络控制"
+                                                                   message:[NSString stringWithFormat:@"当前状态：%@", status]
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ 断网", enabled ? @"关闭" : @"开启"]
+    NSString *actionTitle = isNetworkOn ? @"关闭联网" : @"开启联网";
+    [alert addAction:[UIAlertAction actionWithTitle:actionTitle
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction * _Nonnull action) {
-                                                BOOL newState = !enabled;
-                                                [[NSUserDefaults standardUserDefaults] setBool:newState forKey:@"DeepBlockNetworkEnabled"];
+                                                // 切换阻断标志
+                                                BOOL newBlocking = !blocking; // 如果之前阻断，改为不阻断；反之亦然
+                                                [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                 [[NSUserDefaults standardUserDefaults] synchronize];
-                                                
-                                                triggerNetworkRefresh(); // 刷新网络
-                                                
-                                                showToast([NSString stringWithFormat:@"断网已%@", newState ? @"开启" : @"关闭"], window);
+                                                // 显示 Toast
+                                                NSString *toastMsg = newBlocking ? @"联网已关闭（断网）" : @"联网已开启";
+                                                showToast(toastMsg, window);
                                             }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -173,6 +153,7 @@ static void showSettingsMenu(UIWindow *window) {
 // 注入入口
 // =============================================================
 %ctor {
+    // 默认第一次启动时设为断网（阻断）状态，即 DeepBlockNetworkEnabled = YES
     if (![[NSUserDefaults standardUserDefaults] objectForKey:@"DeepBlockNetworkEnabled"]) {
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"DeepBlockNetworkEnabled"];
         [[NSUserDefaults standardUserDefaults] synchronize];
