@@ -142,39 +142,23 @@ static void showSettingsMenu(UIWindow *window) {
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
     if (self) {
-        [self dk_addDoubleTapGesture];
+        // 直接添加手势，不调用额外方法
+        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleTap:)];
+        gesture.numberOfTouchesRequired = 2;
+        gesture.numberOfTapsRequired = 2;
+        gesture.delaysTouchesBegan = NO;
+        gesture.delaysTouchesEnded = NO;
+        gesture.cancelsTouchesInView = NO;
+        gesture.delegate = (id<UIGestureRecognizerDelegate>)self;
+        [self addGestureRecognizer:gesture];
+        NSLog(@"[DeepBlockNetwork] 2-finger double-tap added");
     }
     return self;
-}
-
-- (void)dk_addDoubleTapGesture {
-    // 移除可能已存在的手势，避免重复添加
-    for (UIGestureRecognizer *gesture in self.gestureRecognizers) {
-        if ([gesture isKindOfClass:[UITapGestureRecognizer class]] &&
-            gesture.numberOfTouchesRequired == 2 &&
-            gesture.numberOfTapsRequired == 2) {
-            [self removeGestureRecognizer:gesture];
-        }
-    }
-    
-    UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleTap:)];
-    gesture.numberOfTouchesRequired = 2;
-    gesture.numberOfTapsRequired = 2;
-    
-    // 关键：不延迟触摸，让手势尽快识别
-    gesture.delaysTouchesBegan = NO;
-    gesture.delaysTouchesEnded = NO;
-    gesture.cancelsTouchesInView = NO;
-    
-    gesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-    [self addGestureRecognizer:gesture];
-    NSLog(@"[DeepBlockNetwork] 2-finger double-tap added");
 }
 
 %new
 - (void)dk_handleDoubleTap:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateRecognized) {
-        // 触觉反馈
         if (@available(iOS 10.0, *)) {
             UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
             [generator prepare];
@@ -184,29 +168,27 @@ static void showSettingsMenu(UIWindow *window) {
     }
 }
 
-// 允许与其他手势共存（关键）
+// 允许与其他手势共存
 %new
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    // 如果是我们的双指双击手势，允许与所有手势共存
-    if ([gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]] &&
-        gestureRecognizer.numberOfTouchesRequired == 2 &&
-        gestureRecognizer.numberOfTapsRequired == 2) {
-        return YES;
+    if ([gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]]) {
+        UITapGestureRecognizer *tap = (UITapGestureRecognizer *)gestureRecognizer;
+        if (tap.numberOfTouchesRequired == 2 && tap.numberOfTapsRequired == 2) {
+            return YES;
+        }
     }
     return NO;
 }
 
-// 不需要等待其他手势失败才识别（提高优先级）
-%new
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    // 我们的手势不依赖于其他手势失败
-    return NO;
-}
-
-// 不要让其他手势要求我们的手势失败
+// 提高优先级：不允许其他手势要求我们失败
 %new
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    // 阻止其他手势要求我们的手势失败（提高识别率）
+    if ([gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]]) {
+        UITapGestureRecognizer *tap = (UITapGestureRecognizer *)gestureRecognizer;
+        if (tap.numberOfTouchesRequired == 2 && tap.numberOfTapsRequired == 2) {
+            return NO; // 不允许被其他手势要求失败
+        }
+    }
     return NO;
 }
 
