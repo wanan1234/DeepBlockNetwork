@@ -14,7 +14,10 @@
 // ---------- 配置 ----------
 static NSArray *kWhitelistDomains = @[];
 
+// 返回 YES 表示阻断（断网），NO 表示允许（联网）
 static BOOL DKIsBlockEnabled(void) {
+    // 注意：这里存储的是“是否阻断”，YES=阻断，NO=允许
+    // 但我们 UI 上用“联网”概念，所以取反显示
     return [[NSUserDefaults standardUserDefaults] boolForKey:@"DeepBlockNetworkEnabled"];
 }
 
@@ -66,7 +69,7 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
-// 手势控制（双指双击）
+// 手势控制（UI 文案改为“联网”）
 // =============================================================
 
 static void showToast(NSString *msg, UIWindow *window) {
@@ -87,7 +90,9 @@ static void showSettingsMenu(UIWindow *window) {
         topVC = topVC.presentedViewController;
     }
     
+    // 注意：存储值是“阻断”标志，YES=断网，NO=联网
     BOOL blocking = [[NSUserDefaults standardUserDefaults] boolForKey:@"DeepBlockNetworkEnabled"];
+    // 联网状态 = !blocking
     BOOL isNetworkOn = !blocking;
     NSString *status = isNetworkOn ? @"已联网" : @"已断网";
     
@@ -99,29 +104,13 @@ static void showSettingsMenu(UIWindow *window) {
     [alert addAction:[UIAlertAction actionWithTitle:actionTitle
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction * _Nonnull action) {
-                                                BOOL newBlocking = !blocking;
-                                                
-                                                if (newBlocking) {
-                                                    UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"提示"
-                                                                                                                           message:@"关闭联网后需要重启 App 才能生效，确定要继续吗？"
-                                                                                                                    preferredStyle:UIAlertControllerStyleAlert];
-                                                    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-                                                        [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
-                                                        [[NSUserDefaults standardUserDefaults] synchronize];
-                                                        showToast(@"联网已关闭", window);
-                                                    }]];
-                                                    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-                                                    
-                                                    UIViewController *top = window.rootViewController;
-                                                    while (top.presentedViewController) {
-                                                        top = top.presentedViewController;
-                                                    }
-                                                    [top presentViewController:confirmAlert animated:YES completion:nil];
-                                                } else {
-                                                    [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
-                                                    [[NSUserDefaults standardUserDefaults] synchronize];
-                                                    showToast(@"联网已开启", window);
-                                                }
+                                                // 切换阻断标志
+                                                BOOL newBlocking = !blocking; // 如果之前阻断，改为不阻断；反之亦然
+                                                [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
+                                                [[NSUserDefaults standardUserDefaults] synchronize];
+                                                // 显示 Toast
+                                                NSString *toastMsg = newBlocking ? @"联网已关闭（断网）" : @"联网已开启";
+                                                showToast(toastMsg, window);
                                             }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -135,61 +124,27 @@ static void showSettingsMenu(UIWindow *window) {
 }
 
 // =============================================================
-// Hook UIWindow：双指双击（增强穿透）
+// Hook UIWindow：双指双击
 // =============================================================
 %hook UIWindow
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
     if (self) {
-        // 直接添加手势，不调用额外方法
-        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleTap:)];
+        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleDoubleTap:)];
         gesture.numberOfTouchesRequired = 2;
         gesture.numberOfTapsRequired = 2;
-        gesture.delaysTouchesBegan = NO;
-        gesture.delaysTouchesEnded = NO;
-        gesture.cancelsTouchesInView = NO;
-        gesture.delegate = (id<UIGestureRecognizerDelegate>)self;
         [self addGestureRecognizer:gesture];
-        NSLog(@"[DeepBlockNetwork] 2-finger double-tap added");
+        NSLog(@"[DeepBlockNetwork] Double-tap gesture added");
     }
     return self;
 }
 
 %new
-- (void)dk_handleDoubleTap:(UITapGestureRecognizer *)gesture {
+- (void)dk_handleDoubleDoubleTap:(UITapGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateRecognized) {
-        if (@available(iOS 10.0, *)) {
-            UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-            [generator prepare];
-            [generator impactOccurred];
-        }
         showSettingsMenu(self);
     }
-}
-
-// 允许与其他手势共存
-%new
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    if ([gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]]) {
-        UITapGestureRecognizer *tap = (UITapGestureRecognizer *)gestureRecognizer;
-        if (tap.numberOfTouchesRequired == 2 && tap.numberOfTapsRequired == 2) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-// 提高优先级：不允许其他手势要求我们失败
-%new
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    if ([gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]]) {
-        UITapGestureRecognizer *tap = (UITapGestureRecognizer *)gestureRecognizer;
-        if (tap.numberOfTouchesRequired == 2 && tap.numberOfTapsRequired == 2) {
-            return NO; // 不允许被其他手势要求失败
-        }
-    }
-    return NO;
 }
 
 %end
@@ -198,6 +153,7 @@ static void showSettingsMenu(UIWindow *window) {
 // 注入入口
 // =============================================================
 %ctor {
+    // 默认第一次启动时设为断网（阻断）状态，即 DeepBlockNetworkEnabled = YES
     if (![[NSUserDefaults standardUserDefaults] objectForKey:@"DeepBlockNetworkEnabled"]) {
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"DeepBlockNetworkEnabled"];
         [[NSUserDefaults standardUserDefaults] synchronize];
