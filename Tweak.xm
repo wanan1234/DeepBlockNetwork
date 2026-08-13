@@ -1,6 +1,6 @@
 // =============================================================
 //  DeepBlockNetwork — 深度断网插件
-//  双指长按手势开关联网/断网
+//  双指双击手势开关联网/断网
 // =============================================================
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -66,7 +66,7 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
-// 手势控制：双指长按
+// 手势控制：双指双击
 // =============================================================
 
 static void showToast(NSString *msg, UIWindow *window) {
@@ -102,14 +102,13 @@ static void showSettingsMenu(UIWindow *window) {
                                                 BOOL newBlocking = !blocking;
                                                 
                                                 if (newBlocking) {
-                                                    // 关闭联网 -> 断网，需要重启确认
                                                     UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"提示"
                                                                                                                            message:@"关闭联网后需要重启 App 才能生效，确定要继续吗？"
                                                                                                                     preferredStyle:UIAlertControllerStyleAlert];
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
                                                         [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                         [[NSUserDefaults standardUserDefaults] synchronize];
-                                                        showToast(@"联网已关闭（断网）", window);
+                                                        showToast(@"联网已关闭", window);
                                                     }]];
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
                                                     
@@ -119,7 +118,6 @@ static void showSettingsMenu(UIWindow *window) {
                                                     }
                                                     [top presentViewController:confirmAlert animated:YES completion:nil];
                                                 } else {
-                                                    // 开启联网（从断网恢复）可直接生效
                                                     [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                     [[NSUserDefaults standardUserDefaults] synchronize];
                                                     showToast(@"联网已开启", window);
@@ -137,28 +135,29 @@ static void showSettingsMenu(UIWindow *window) {
 }
 
 // =============================================================
-// Hook UIWindow：双指长按 1.2 秒
+// Hook UIWindow：双指双击
 // =============================================================
 %hook UIWindow
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
     if (self) {
-        // 双指长按手势（1.2 秒）
-        UILongPressGestureRecognizer *gesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleLongPress:)];
+        // 双指双击手势
+        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleTap:)];
         gesture.numberOfTouchesRequired = 2;
-        gesture.minimumPressDuration = 1.2;
-        gesture.allowableMovement = 30;
+        gesture.numberOfTapsRequired = 2;
         gesture.cancelsTouchesInView = NO;
+        gesture.delaysTouchesBegan = NO;
+        gesture.delaysTouchesEnded = NO;
         [self addGestureRecognizer:gesture];
-        NSLog(@"[DeepBlockNetwork] 2-finger long press gesture added");
+        NSLog(@"[DeepBlockNetwork] 2-finger double-tap gesture added");
     }
     return self;
 }
 
 %new
-- (void)dk_handleLongPress:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan) return;
+- (void)dk_handleDoubleTap:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateRecognized) return;
     
     // 触觉反馈（震动）
     if (@available(iOS 10.0, *)) {
