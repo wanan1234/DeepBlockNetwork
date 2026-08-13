@@ -95,7 +95,7 @@ static void showSettingsMenu(UIWindow *window) {
                                                                    message:[NSString stringWithFormat:@"当前状态：%@\n切换后可能需重启 App 生效", status]
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    NSString *actionTitle = isNetworkOn ? @"关闭联网（断网）" : @"开启联网";
+    NSString *actionTitle = isNetworkOn ? @"关闭联网" : @"开启联网";
     [alert addAction:[UIAlertAction actionWithTitle:actionTitle
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction * _Nonnull action) {
