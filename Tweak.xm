@@ -1,6 +1,6 @@
 // =============================================================
 //  DeepBlockNetwork — 深度断网插件
-//  通过 UIApplication sendEvent: 检测双指长按
+//  双指长按手势（基于 UIApplication sendEvent:，不会被拦截）
 // =============================================================
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -66,15 +66,9 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
-// 通过 UIApplication 拦截触摸事件检测双指长按
+// 手势检测（基于 UIApplication sendEvent:）
 // =============================================================
 
-// 用于跟踪触摸状态
-static NSSet *dk_currentTouches = nil;
-static NSTimer *dk_longPressTimer = nil;
-static CGPoint dk_firstTouchLocation = {0, 0};
-
-// 显示 Toast
 static void showToast(NSString *msg, UIWindow *window) {
     UIViewController *top = window.rootViewController;
     while (top.presentedViewController) {
@@ -87,7 +81,6 @@ static void showToast(NSString *msg, UIWindow *window) {
     });
 }
 
-// 显示设置菜单
 static void showSettingsMenu(UIWindow *window) {
     UIViewController *topVC = window.rootViewController;
     while (topVC.presentedViewController) {
@@ -99,30 +92,31 @@ static void showSettingsMenu(UIWindow *window) {
     NSString *status = isNetworkOn ? @"已联网" : @"已断网";
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"网络控制"
-                                                                   message:[NSString stringWithFormat:@"当前状态：%@\n切换联网状态后，可能需要重启App生效", status]
+                                                                   message:[NSString stringWithFormat:@"当前状态：%@\n切换后可能需重启 App 生效", status]
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    NSString *actionTitle = isNetworkOn ? @"关闭联网" : @"开启联网";
+    NSString *actionTitle = isNetworkOn ? @"关闭联网（断网）" : @"开启联网";
     [alert addAction:[UIAlertAction actionWithTitle:actionTitle
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction * _Nonnull action) {
                                                 BOOL newBlocking = !blocking;
+                                                
                                                 if (newBlocking) {
-                                                    // 关闭联网需要重启
-                                                    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"提示"
-                                                                                                                   message:@"关闭联网后需要重启 App 才能生效，确定要继续吗？"
-                                                                                                            preferredStyle:UIAlertControllerStyleAlert];
-                                                    [confirm addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+                                                    UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"提示"
+                                                                                                                           message:@"关闭联网后需要重启 App 才能生效，确定要继续吗？"
+                                                                                                                    preferredStyle:UIAlertControllerStyleAlert];
+                                                    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
                                                         [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                         [[NSUserDefaults standardUserDefaults] synchronize];
-                                                        showToast(@"联网已关闭", window);
+                                                        showToast(@"联网已关闭（断网）", window);
                                                     }]];
-                                                    [confirm addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+                                                    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+                                                    
                                                     UIViewController *top = window.rootViewController;
                                                     while (top.presentedViewController) {
                                                         top = top.presentedViewController;
                                                     }
-                                                    [top presentViewController:confirm animated:YES completion:nil];
+                                                    [top presentViewController:confirmAlert animated:YES completion:nil];
                                                 } else {
                                                     [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                     [[NSUserDefaults standardUserDefaults] synchronize];
@@ -140,81 +134,55 @@ static void showSettingsMenu(UIWindow *window) {
     [topVC presentViewController:alert animated:YES completion:nil];
 }
 
+// 检测双指长按的全局变量
+static NSTimeInterval touchStartTime = 0;
+static BOOL isTouching = NO;
+static NSInteger touchCount = 0;
+
 // =============================================================
-// Hook UIApplication 拦截触摸事件
+// Hook UIApplication 的 sendEvent: 来检测触摸事件
 // =============================================================
 %hook UIApplication
 
 - (void)sendEvent:(UIEvent *)event {
-    %orig; // 必须先调用原方法
+    %orig; // 先执行原始事件处理
     
-    // 只处理触摸事件
     if (event.type != UIEventTypeTouches) return;
     
-    NSSet *touches = event.allTouches;
-    if (!touches || touches.count == 0) return;
+    NSSet *touches = [event allTouches];
+    if (touches.count == 0) return;
     
-    // 获取所有触摸点
-    NSMutableArray *activeTouches = [NSMutableArray array];
-    for (UITouch *touch in touches) {
-        if (touch.phase != UITouchPhaseEnded && touch.phase != UITouchPhaseCancelled) {
-            [activeTouches addObject:touch];
+    UITouch *touch = [touches anyObject];
+    if (touch.phase == UITouchPhaseBegan) {
+        touchCount = touches.count;
+        if (touchCount == 2) {
+            isTouching = YES;
+            touchStartTime = [NSDate timeIntervalSinceReferenceDate];
         }
-    }
-    
-    // 检查是否有两根手指同时触摸
-    if (activeTouches.count >= 2) {
-        // 获取第一根手指的位置
-        UITouch *firstTouch = activeTouches.firstObject;
-        CGPoint location = [firstTouch locationInView:firstTouch.window];
-        
-        // 记录开始位置和开始时间
-        if (!dk_currentTouches || dk_currentTouches.count < 2) {
-            dk_firstTouchLocation = location;
-            // 启动长按定时器
-            [dk_longPressTimer invalidate];
-            dk_longPressTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
-                                                                 target:self
-                                                               selector:@selector(dk_handleLongPressTimer:)
-                                                               userInfo:nil
-                                                                repeats:NO];
-        }
-        dk_currentTouches = activeTouches;
-        
-        // 检查手指是否移动超过阈值（取消长按）
-        if (dk_currentTouches.count >= 2) {
-            CGFloat dx = location.x - dk_firstTouchLocation.x;
-            CGFloat dy = location.y - dk_firstTouchLocation.y;
-            if (sqrt(dx*dx + dy*dy) > 30) {
-                [dk_longPressTimer invalidate];
-                dk_longPressTimer = nil;
+    } else if (touch.phase == UITouchPhaseEnded || touch.phase == UITouchPhaseCancelled) {
+        isTouching = NO;
+        touchCount = 0;
+    } else if (touch.phase == UITouchPhaseStationary) {
+        // 检查是否双指仍触摸，且持续时间超过 1.2 秒
+        if (isTouching && touchCount == 2) {
+            NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+            if (now - touchStartTime > 1.2) {
+                // 触发菜单
+                UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+                if (keyWindow) {
+                    // 触觉反馈
+                    if (@available(iOS 10.0, *)) {
+                        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+                        [generator prepare];
+                        [generator impactOccurred];
+                    }
+                    showSettingsMenu(keyWindow);
+                }
+                // 重置状态，避免重复触发
+                isTouching = NO;
+                touchCount = 0;
             }
         }
-    } else {
-        // 手指松开或少于两根，取消定时器
-        [dk_longPressTimer invalidate];
-        dk_longPressTimer = nil;
-        dk_currentTouches = nil;
-    }
-}
-
-// 定时器触发：长按识别成功
-%new
-- (void)dk_handleLongPressTimer:(NSTimer *)timer {
-    [dk_longPressTimer invalidate];
-    dk_longPressTimer = nil;
-    
-    // 触觉反馈
-    if (@available(iOS 10.0, *)) {
-        UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-        [generator prepare];
-        [generator impactOccurred];
-    }
-    
-    // 获取当前窗口
-    UIWindow *window = [UIApplication sharedApplication].windows.firstObject;
-    if (window) {
-        showSettingsMenu(window);
     }
 }
 
