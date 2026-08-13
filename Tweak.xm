@@ -66,7 +66,7 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
-// 手势控制
+// 手势控制（双指双击）
 // =============================================================
 
 static void showToast(NSString *msg, UIWindow *window) {
@@ -102,7 +102,6 @@ static void showSettingsMenu(UIWindow *window) {
                                                 BOOL newBlocking = !blocking;
                                                 
                                                 if (newBlocking) {
-                                                    // 关闭联网 → 需要重启
                                                     UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"提示"
                                                                                                                            message:@"关闭联网后需要重启 App 才能生效，确定要继续吗？"
                                                                                                                     preferredStyle:UIAlertControllerStyleAlert];
@@ -119,7 +118,6 @@ static void showSettingsMenu(UIWindow *window) {
                                                     }
                                                     [top presentViewController:confirmAlert animated:YES completion:nil];
                                                 } else {
-                                                    // 开启联网 → 直接生效
                                                     [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                     [[NSUserDefaults standardUserDefaults] synchronize];
                                                     showToast(@"联网已开启", window);
@@ -137,25 +135,40 @@ static void showSettingsMenu(UIWindow *window) {
 }
 
 // =============================================================
-// Hook UIWindow：双指双击（支持与 App 手势共存）
+// Hook UIWindow：双指双击（增强穿透）
 // =============================================================
 %hook UIWindow
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
     if (self) {
-        // 双指双击
-        UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleTap:)];
-        gesture.numberOfTouchesRequired = 2;
-        gesture.numberOfTapsRequired = 2;
-        gesture.cancelsTouchesInView = NO;   // 不阻断 App 触摸事件
-        gesture.delaysTouchesBegan = NO;     // 不延迟触摸，确保 App 手势优先
-        gesture.delaysTouchesEnded = NO;
-        gesture.delegate = (id<UIGestureRecognizerDelegate>)self;
-        [self addGestureRecognizer:gesture];
-        NSLog(@"[DeepBlockNetwork] Double-tap gesture added");
+        [self dk_addDoubleTapGesture];
     }
     return self;
+}
+
+- (void)dk_addDoubleTapGesture {
+    // 移除可能已存在的手势，避免重复添加
+    for (UIGestureRecognizer *gesture in self.gestureRecognizers) {
+        if ([gesture isKindOfClass:[UITapGestureRecognizer class]] &&
+            gesture.numberOfTouchesRequired == 2 &&
+            gesture.numberOfTapsRequired == 2) {
+            [self removeGestureRecognizer:gesture];
+        }
+    }
+    
+    UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleTap:)];
+    gesture.numberOfTouchesRequired = 2;
+    gesture.numberOfTapsRequired = 2;
+    
+    // 关键：不延迟触摸，让手势尽快识别
+    gesture.delaysTouchesBegan = NO;
+    gesture.delaysTouchesEnded = NO;
+    gesture.cancelsTouchesInView = NO;
+    
+    gesture.delegate = (id<UIGestureRecognizerDelegate>)self;
+    [self addGestureRecognizer:gesture];
+    NSLog(@"[DeepBlockNetwork] 2-finger double-tap added");
 }
 
 %new
@@ -171,17 +184,30 @@ static void showSettingsMenu(UIWindow *window) {
     }
 }
 
-// 允许与其他手势共存
+// 允许与其他手势共存（关键）
 %new
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    return YES;
+    // 如果是我们的双指双击手势，允许与所有手势共存
+    if ([gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]] &&
+        gestureRecognizer.numberOfTouchesRequired == 2 &&
+        gestureRecognizer.numberOfTapsRequired == 2) {
+        return YES;
+    }
+    return NO;
 }
 
-// 只有当手势失败时才识别（避免与 App 的双指手势冲突）
+// 不需要等待其他手势失败才识别（提高优先级）
+%new
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    // 我们的手势不依赖于其他手势失败
+    return NO;
+}
+
+// 不要让其他手势要求我们的手势失败
 %new
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
-    // 让 App 的手势优先识别，我们只在 App 手势失败时才响应
-    return YES;
+    // 阻止其他手势要求我们的手势失败（提高识别率）
+    return NO;
 }
 
 %end
