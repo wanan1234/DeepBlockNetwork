@@ -1,7 +1,6 @@
 // =============================================================
-//  DeepBlockNetwork — 深度断网插件（Hook connect + NSURLProtocol）
-//  使用 fishhook 替换 connect 系统调用，阻断所有 TCP 连接
-//  新增：双指双击手势开关菜单，实时切换无需重启
+//  DeepBlockNetwork — 深度断网插件
+//  双指双击手势开关，实时切换无需重启（增强版）
 // =============================================================
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -10,6 +9,7 @@
 #import <errno.h>
 #import <arpa/inet.h>
 #import <netdb.h>
+#import <SystemConfiguration/SystemConfiguration.h>
 #import "fishhook.h"
 
 // ---------- 配置 ----------
@@ -21,22 +21,20 @@ static BOOL DKIsBlockEnabled(void) {
 
 static BOOL DKShouldBlockConnection(const struct sockaddr *addr) {
     if (!DKIsBlockEnabled()) return NO;
-    return YES; // 全部拦截
+    return YES;
 }
 
 // ---------- 原始 connect ----------
 static int (*orig_connect)(int, const struct sockaddr *, socklen_t);
 
-// ---------- 替换后的 connect ----------
 int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     if (DKShouldBlockConnection(addr)) {
-        errno = EHOSTUNREACH;  // 改为 EHOSTUNREACH，应用可能持续重试
+        errno = ENETUNREACH;  // 网络不可达
         return -1;
     }
     return orig_connect(sockfd, addr, addrlen);
 }
 
-// ---------- 安装 Hook ----------
 static void install_connect_hook(void) {
     struct rebinding rebind;
     rebind.name = "connect";
@@ -69,9 +67,35 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
+// 切换时触发网络刷新
+// =============================================================
+static void triggerNetworkRefresh(void) {
+    // 1. 发送系统网络变化通知（Darwin）
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("com.apple.system.config.network_change"), NULL, NULL, YES);
+    // 2. 发送 Reachability 通知（AFNetworking 等库监听）
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"kNetworkReachabilityChangedNotification" object:nil];
+    // 3. 清除 URL 缓存
+    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+    // 4. 发送 App 激活通知（某些应用在激活时重新检查网络）
+    [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+    // 5. 尝试重置默认 NSURLSession（如果存在）
+    NSURLSession *session = [NSURLSession sharedSession];
+    if (session) {
+        // 仅 iOS 9+ 有 resetWithCompletionHandler
+        if ([session respondsToSelector:@selector(resetWithCompletionHandler:)]) {
+            [session resetWithCompletionHandler:^{
+                NSLog(@"[DeepBlockNetwork] NSURLSession reset completed");
+            }];
+        }
+    }
+    // 6. 强制刷新 Reachability（使用 SystemConfiguration 私有 API 可能不行，但我们可以发送通知）
+    // 一些应用会监听 SCNetworkReachability 的变化，我们通过发送通知来尝试触发。
+}
+
+// =============================================================
 // 手势控制
 // =============================================================
-
 static void showToast(NSString *msg, UIWindow *window) {
     UIViewController *top = window.rootViewController;
     while (top.presentedViewController) {
@@ -104,12 +128,7 @@ static void showSettingsMenu(UIWindow *window) {
                                                 [[NSUserDefaults standardUserDefaults] setBool:newState forKey:@"DeepBlockNetworkEnabled"];
                                                 [[NSUserDefaults standardUserDefaults] synchronize];
                                                 
-                                                // 发送网络变化通知（尝试让应用刷新网络状态）
-                                                dispatch_async(dispatch_get_main_queue(), ^{
-                                                    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                                                                         CFSTR("com.apple.system.config.network_change"), NULL, NULL, YES);
-                                                    [[NSNotificationCenter defaultCenter] postNotificationName:@"kNetworkReachabilityChangedNotification" object:nil];
-                                                });
+                                                triggerNetworkRefresh(); // 刷新网络
                                                 
                                                 showToast([NSString stringWithFormat:@"断网已%@", newState ? @"开启" : @"关闭"], window);
                                             }]];
