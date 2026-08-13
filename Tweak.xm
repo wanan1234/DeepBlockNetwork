@@ -1,7 +1,7 @@
 // =============================================================
 //  DeepBlockNetwork — 深度断网插件（Hook connect + NSURLProtocol）
 //  使用 fishhook 替换 connect 系统调用，阻断所有 TCP 连接
-//  新增：双指双击手势开关菜单
+//  新增：双指双击手势开关菜单，实时切换无需重启
 // =============================================================
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -13,29 +13,24 @@
 #import "fishhook.h"
 
 // ---------- 配置 ----------
-// 白名单域名（这些域名的连接将放行）—— 暂不实现
 static NSArray *kWhitelistDomains = @[];
 
-// 从 NSUserDefaults 读取开关状态
 static BOOL DKIsBlockEnabled(void) {
-    // 默认开启，用户可通过手势切换
     return [[NSUserDefaults standardUserDefaults] boolForKey:@"DeepBlockNetworkEnabled"];
 }
 
-// 判断是否应该拦截此连接（根据目标 IP 或域名）
 static BOOL DKShouldBlockConnection(const struct sockaddr *addr) {
     if (!DKIsBlockEnabled()) return NO;
-    // 简单全部拦截（忽略白名单）
-    return YES;
+    return YES; // 全部拦截
 }
 
-// ---------- 原始 connect 函数指针 ----------
+// ---------- 原始 connect ----------
 static int (*orig_connect)(int, const struct sockaddr *, socklen_t);
 
 // ---------- 替换后的 connect ----------
 int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     if (DKShouldBlockConnection(addr)) {
-        errno = ECONNREFUSED;  // 模拟连接被拒绝
+        errno = EHOSTUNREACH;  // 改为 EHOSTUNREACH，应用可能持续重试
         return -1;
     }
     return orig_connect(sockfd, addr, addrlen);
@@ -51,7 +46,7 @@ static void install_connect_hook(void) {
     NSLog(@"[DeepBlockNetwork] connect hook installed");
 }
 
-// ---------- NSURLProtocol 辅助拦截 ----------
+// ---------- NSURLProtocol ----------
 @interface BlockProtocol : NSURLProtocol
 @end
 @implementation BlockProtocol
@@ -74,10 +69,9 @@ static void install_connect_hook(void) {
 @end
 
 // =============================================================
-// 新增：双指双击手势控制
+// 手势控制
 // =============================================================
 
-// 显示 Toast 提示（全局函数）
 static void showToast(NSString *msg, UIWindow *window) {
     UIViewController *top = window.rootViewController;
     while (top.presentedViewController) {
@@ -90,7 +84,6 @@ static void showToast(NSString *msg, UIWindow *window) {
     });
 }
 
-// 显示设置菜单（全局函数）
 static void showSettingsMenu(UIWindow *window) {
     UIViewController *topVC = window.rootViewController;
     while (topVC.presentedViewController) {
@@ -110,13 +103,19 @@ static void showSettingsMenu(UIWindow *window) {
                                                 BOOL newState = !enabled;
                                                 [[NSUserDefaults standardUserDefaults] setBool:newState forKey:@"DeepBlockNetworkEnabled"];
                                                 [[NSUserDefaults standardUserDefaults] synchronize];
-                                                // 显示 Toast 提示
+                                                
+                                                // 发送网络变化通知（尝试让应用刷新网络状态）
+                                                dispatch_async(dispatch_get_main_queue(), ^{
+                                                    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                                                         CFSTR("com.apple.system.config.network_change"), NULL, NULL, YES);
+                                                    [[NSNotificationCenter defaultCenter] postNotificationName:@"kNetworkReachabilityChangedNotification" object:nil];
+                                                });
+                                                
                                                 showToast([NSString stringWithFormat:@"断网已%@", newState ? @"开启" : @"关闭"], window);
                                             }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     
-    // iPad 适配
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) {
         alert.popoverPresentationController.sourceView = window;
         alert.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(window.bounds), CGRectGetMidY(window.bounds), 0, 0);
@@ -126,14 +125,13 @@ static void showSettingsMenu(UIWindow *window) {
 }
 
 // =============================================================
-// Hook UIWindow：添加双指双击手势
+// Hook UIWindow：双指双击
 // =============================================================
 %hook UIWindow
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = %orig;
     if (self) {
-        // 双指双击手势
         UITapGestureRecognizer *gesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dk_handleDoubleDoubleTap:)];
         gesture.numberOfTouchesRequired = 2;
         gesture.numberOfTapsRequired = 2;
@@ -156,17 +154,14 @@ static void showSettingsMenu(UIWindow *window) {
 // 注入入口
 // =============================================================
 %ctor {
-    // 默认第一次启动时开启断网（若未设置）
     if (![[NSUserDefaults standardUserDefaults] objectForKey:@"DeepBlockNetworkEnabled"]) {
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"DeepBlockNetworkEnabled"];
         [[NSUserDefaults standardUserDefaults] synchronize];
     }
     
-    // 注册 NSURLProtocol
     [NSURLProtocol registerClass:[BlockProtocol class]];
     NSLog(@"[DeepBlockNetwork] NSURLProtocol registered");
     
-    // 安装 connect hook
     install_connect_hook();
     
     NSLog(@"[DeepBlockNetwork] DeepBlockNetwork loaded");
