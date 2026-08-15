@@ -102,15 +102,29 @@ static void showSettingsMenu(UIWindow *window) {
                                                 BOOL newBlocking = !blocking;
                                                 
                                                 if (newBlocking) {
-                                                    // 关闭联网 -> 断网，需要重启确认
+                                                    // ===== 关闭联网（开启断网）=====
                                                     UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"提示"
                                                                                                                            message:@"关闭联网后需要重启 App 才能生效，确定要继续吗？"
                                                                                                                     preferredStyle:UIAlertControllerStyleAlert];
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
                                                         [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                         [[NSUserDefaults standardUserDefaults] synchronize];
-                                                        // 显示Toast提示已关闭
-                                                        showToast(@"联网已关闭（断网）", window);
+                                                        
+                                                        // 询问是否立即重启
+                                                        UIAlertController *restartAlert = [UIAlertController alertControllerWithTitle:@"重启应用"
+                                                                                                                               message:@"联网已关闭（断网），需要重启应用才能生效，是否立即重启？"
+                                                                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                                                        [restartAlert addAction:[UIAlertAction actionWithTitle:@"立即重启" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+                                                            exit(0);
+                                                        }]];
+                                                        [restartAlert addAction:[UIAlertAction actionWithTitle:@"稍后" style:UIAlertActionStyleCancel handler:^(UIAlertAction * _Nonnull action) {
+                                                            showToast(@"请手动重启应用以应用断网设置", window);
+                                                        }]];
+                                                        UIViewController *top = window.rootViewController;
+                                                        while (top.presentedViewController) {
+                                                            top = top.presentedViewController;
+                                                        }
+                                                        [top presentViewController:restartAlert animated:YES completion:nil];
                                                     }]];
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
                                                     
@@ -120,21 +134,22 @@ static void showSettingsMenu(UIWindow *window) {
                                                     }
                                                     [top presentViewController:confirmAlert animated:YES completion:nil];
                                                 } else {
-                                                    // 开启联网（从断网恢复）直接生效，弹窗提示
-                                                    UIAlertController *infoAlert = [UIAlertController alertControllerWithTitle:@"联网已开启"
-                                                                                                                         message:@"网络连接已恢复，立即生效"
-                                                                                                                  preferredStyle:UIAlertControllerStyleAlert];
-                                                    [infoAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-                                                        // 用户确认后执行设置
+                                                    // ===== 开启联网（关闭断网）=====
+                                                    UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"开启联网"
+                                                                                                                           message:@"确定要开启联网吗？开启后立即生效"
+                                                                                                                    preferredStyle:UIAlertControllerStyleAlert];
+                                                    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
                                                         [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                         [[NSUserDefaults standardUserDefaults] synchronize];
+                                                        showToast(@"联网已开启，立即生效", window);
                                                     }]];
+                                                    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
                                                     
                                                     UIViewController *top = window.rootViewController;
                                                     while (top.presentedViewController) {
                                                         top = top.presentedViewController;
                                                     }
-                                                    [top presentViewController:infoAlert animated:YES completion:nil];
+                                                    [top presentViewController:confirmAlert animated:YES completion:nil];
                                                 }
                                             }]];
     
