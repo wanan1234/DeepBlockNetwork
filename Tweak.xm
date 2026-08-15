@@ -92,7 +92,7 @@ static void showSettingsMenu(UIWindow *window) {
     NSString *status = isNetworkOn ? @"已联网" : @"已断网";
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"网络控制"
-                                                                   message:[NSString stringWithFormat:@"当前状态：%@\n切换后可能需重启 App 生效", status]
+                                                                   message:[NSString stringWithFormat:@"当前状态：%@", status]
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
     NSString *actionTitle = isNetworkOn ? @"关闭联网" : @"开启联网";
@@ -109,6 +109,7 @@ static void showSettingsMenu(UIWindow *window) {
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
                                                         [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
                                                         [[NSUserDefaults standardUserDefaults] synchronize];
+                                                        // 显示Toast提示已关闭
                                                         showToast(@"联网已关闭（断网）", window);
                                                     }]];
                                                     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -119,10 +120,21 @@ static void showSettingsMenu(UIWindow *window) {
                                                     }
                                                     [top presentViewController:confirmAlert animated:YES completion:nil];
                                                 } else {
-                                                    // 开启联网（从断网恢复）可直接生效
-                                                    [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
-                                                    [[NSUserDefaults standardUserDefaults] synchronize];
-                                                    showToast(@"联网已开启", window);
+                                                    // 开启联网（从断网恢复）直接生效，弹窗提示
+                                                    UIAlertController *infoAlert = [UIAlertController alertControllerWithTitle:@"联网已开启"
+                                                                                                                         message:@"网络连接已恢复，立即生效"
+                                                                                                                  preferredStyle:UIAlertControllerStyleAlert];
+                                                    [infoAlert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+                                                        // 用户确认后执行设置
+                                                        [[NSUserDefaults standardUserDefaults] setBool:newBlocking forKey:@"DeepBlockNetworkEnabled"];
+                                                        [[NSUserDefaults standardUserDefaults] synchronize];
+                                                    }]];
+                                                    
+                                                    UIViewController *top = window.rootViewController;
+                                                    while (top.presentedViewController) {
+                                                        top = top.presentedViewController;
+                                                    }
+                                                    [top presentViewController:infoAlert animated:YES completion:nil];
                                                 }
                                             }]];
     
